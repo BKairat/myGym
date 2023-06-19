@@ -481,14 +481,15 @@ class SwitchReward(DistanceReward):
 
         d = self.abs_diff()
         a = self.calc_angle_reward()
-
-        distance_bot_line = self.get_distace(self.x_bot_curr_pos, self.y_bot_curr_pos, self.z_bot_curr_pos, -0.7, self.y_obj, self.z_obj) 
-        print(distance_bot_line)
+        #dbl - distance between bot and line 
+        dbl = self.get_distance(self.x_bot_curr_pos, self.y_bot_curr_pos, self.z_bot_curr_pos, -0.7, self.y_obj, self.z_obj) 
+        #dbo - distance between bot and object 
+        dbo = self.get_distance(self.x_bot_curr_pos, self.y_bot_curr_pos, self.z_bot_curr_pos, self.x_obj, self.y_obj, self.z_obj)
         if self.is_line:
-            print()
+            reward = 1 / dbo
         else:
-            reward = 1 / distance_bot_line
-            if distance <= 0.00001:
+            reward = 1 / dbl
+            if dbl < 0.001:
                 self.is_line = True
             
         # reward = - self.k_w * w - self.k_d * d + self.k_a * a
@@ -583,7 +584,7 @@ class SwitchReward(DistanceReward):
                 self.z_obj += z
     
     @staticmethod
-    def get_distace(x1: float, y1: float, z1: float, x2: float, y2: float, z2: float) -> float:
+    def get_distance(x1: float, y1: float, z1: float, x2: float, y2: float, z2: float) -> float:
         """ returns distance between two dots in 3d"""
         return sqrt((x1-x2)**2 + (y1-y2)**2 + (z1-z2)**2)
 
