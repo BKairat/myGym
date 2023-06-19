@@ -447,6 +447,8 @@ class SwitchReward(DistanceReward):
         self.k_d = 0.3    # coefficient for absolute distance between gripper and end position
         self.k_a = 1      # coefficient for calculated angle reward
 
+        self.is_line = False 
+
     def compute(self, observation):
         """
         Compute reward signal based on distance between 2 objects, angle of switch and difference between point and line
@@ -480,7 +482,16 @@ class SwitchReward(DistanceReward):
         d = self.abs_diff()
         a = self.calc_angle_reward()
 
-        reward = - self.k_w * w - self.k_d * d + self.k_a * a
+        distance_bot_line = self.get_distace(self.x_bot_curr_pos, self.y_bot_curr_pos, self.z_bot_curr_pos, -0.7, self.y_obj, self.z_obj) 
+        print(distance_bot_line)
+        if self.is_line:
+            print()
+        else:
+            reward = 1 / distance_bot_line
+            if distance <= 0.00001:
+                self.is_line = True
+            
+        # reward = - self.k_w * w - self.k_d * d + self.k_a * a
         #self.task.check_distance_threshold(observation=observation)
         self.task.check_goal()
         self.rewards_history.append(reward)
@@ -490,7 +501,8 @@ class SwitchReward(DistanceReward):
             self.env.p.addUserDebugText(f"reward:{reward:.3f}, w:{w * self.k_w:.3f}, d:{d * self.k_d:.3f},"
                                         f" a:{a * self.k_a:.3f}",
                                         [1, 1, 1], textSize=2.0, lifeTime=0.05, textColorRGB=[0.6, 0.0, 0.6])
-        return reward
+        # print(f"\n\n{self.rewards_history}\n\n")
+        return reward if reward >= self.rewards_history[-1] else -reward
 
     def reset(self):
         """
@@ -514,6 +526,8 @@ class SwitchReward(DistanceReward):
         # auxiliary variables
         self.offset = None
         self.prev_val = None
+
+        self.is_line = False
 
     def set_variables(self, o1, o2):
         """
@@ -568,6 +582,11 @@ class SwitchReward(DistanceReward):
                 self.y_obj += y
                 self.z_obj += z
     
+    @staticmethod
+    def get_distace(x1: float, y1: float, z1: float, x2: float, y2: float, z2: float) -> float:
+        """ returns distance between two dots in 3d"""
+        return sqrt((x1-x2)**2 + (y1-y2)**2 + (z1-z2)**2)
+
     def get_positions(self, observation):
         goal_position = observation["goal_state"]
         poker_position = observation["actual_state"]
@@ -687,6 +706,7 @@ class SwitchReward(DistanceReward):
         if self.prev_val == angle:
             reward = 0
         self.prev_val = angle
+        # print(reward)
         return reward
 
 
