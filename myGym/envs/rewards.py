@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 from stable_baselines import results_plotter
 import os
 import math
-from math import sqrt
+from math import sqrt, fabs
 from myGym.utils.vector import Vector
 import random
 
@@ -475,23 +475,37 @@ class SwitchReward(DistanceReward):
             if self.debug:
                 self.env.p.addUserDebugLine([self.x_obj, self.y_obj, self.z_obj], [0.7, self.y_obj, self.z_obj],
                                             lineColorRGB=(0, 0.5, 1), lineWidth=3, lifeTime=1)
+
             w = self.calc_direction_3d(self.x_obj, self.y_obj, self.z_obj, -0.7, self.y_obj, self.z_obj,
                                        self.x_bot_curr_pos,
                                        self.y_bot_curr_pos, self.z_bot_curr_pos)
 
         d = self.abs_diff()
         a = self.calc_angle_reward()
-        #dbl - distance between bot and line 
-        dbl = self.get_distance(self.x_bot_curr_pos, self.y_bot_curr_pos, self.z_bot_curr_pos, -0.7, self.y_obj, self.z_obj) 
-        #dbo - distance between bot and object 
-        dbo = self.get_distance(self.x_bot_curr_pos, self.y_bot_curr_pos, self.z_bot_curr_pos, self.x_obj, self.y_obj, self.z_obj)
-        if self.is_line:
-            reward = 1 / dbo
+
+
+        if fabs(self.y_obj - self.y_bot_curr_pos) >= 0.001:
+            reward = -1000 * fabs(self.y_obj - self.y_bot_curr_pos)
+        elif fabs(self.z_obj - self.z_bot_curr_pos) >= 0.001:
+            reward = -1 * fabs(self.z_obj - self.z_bot_curr_pos)
+        elif self.x_obj > self.x_bot_curr_pos:
+            reward = 1 / fabs(self.x_obj-0.4 - self.x_bot_curr_pos)
         else:
-            reward = 1 / dbl
-            if dbl < 0.001:
-                self.is_line = True
+            reward = 1 / fabs(self.x_obj+0.4 - self.x_bot_curr_pos)
+        
+
+        # #dbl - distance between bot and line 
+        # dbl = self.get_distance(self.x_bot_curr_pos, self.y_bot_curr_pos, self.z_bot_curr_pos, -0.7, self.y_obj, self.z_obj) 
+        # #dbo - distance between bot and object 
+        # dbo = self.get_distance(self.x_bot_curr_pos, self.y_bot_curr_pos, self.z_bot_curr_pos, self.x_obj+0.4, self.y_obj, self.z_obj)
+        # if self.is_line:
+        #     reward = -dbo
+        # else:
+        #     reward = -dbl
+        #     if dbl < 0.001:
+        #         self.is_line = True
             
+
         # reward = - self.k_w * w - self.k_d * d + self.k_a * a
         #self.task.check_distance_threshold(observation=observation)
         self.task.check_goal()
@@ -499,12 +513,12 @@ class SwitchReward(DistanceReward):
         if self.debug:
             self.env.p.addUserDebugLine([self.x_obj, self.y_obj, self.z_obj], gripper_position,
                                         lineColorRGB=(1, 0, 0), lineWidth=3, lifeTime=0.03)
-            self.env.p.addUserDebugText(f"reward:{reward:.3f}, w:{w * self.k_w:.3f}, d:{d * self.k_d:.3f},"
-                                        f" a:{a * self.k_a:.3f}",
-                                        [1, 1, 1], textSize=2.0, lifeTime=0.05, textColorRGB=[0.6, 0.0, 0.6])
-        # print(f"\n\n{self.rewards_history}\n\n")
-        return reward if reward >= self.rewards_history[-1] else -reward
 
+            # self.env.p.addUserDebugText(f"reward:{reward:.3f}, w:{w * self.k_w:.3f}, d:{d * self.k_d:.3f},"
+            # #                             f" a:{a * self.k_a:.3f}",
+            #                             [1, 1, 1], textSize=2.0, lifeTime=0.05, textColorRGB=[0.6, 0.0, 0.6])
+        # print(f"\n\n{self.rewards_history}\n\n")
+        return reward 
     def reset(self):
         """
         Reset current positions of switch, robot, initial position of switch, robot and previous angle of switch.
