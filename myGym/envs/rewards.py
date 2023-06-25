@@ -482,17 +482,16 @@ class SwitchReward(DistanceReward):
 
         d = self.abs_diff()
         a = self.calc_angle_reward()
+        reward = 0
+        points  =  [(self.x_obj+0.2 if self.x_obj < 0 else self.x_obj-0.2, self.y_obj, self.z_obj+0.2),
+                    (self.x_obj+0.2 if self.x_obj < 0 else self.x_obj-0.2, self.y_obj, self.z_obj+0.01),
+                    (self.x_obj-0.1 if self.x_obj < 0 else self.x_obj+0.1, self.y_obj, self.z_obj+0.01)]
+        print(self.x_obj, self.y_obj, self.z_obj)
 
-
-        if fabs(self.y_obj - self.y_bot_curr_pos) >= 0.001:
-            reward = -1000 * fabs(self.y_obj - self.y_bot_curr_pos)
-        elif fabs(self.z_obj - self.z_bot_curr_pos) >= 0.001:
-            reward = -1 * fabs(self.z_obj - self.z_bot_curr_pos)
-        elif self.x_obj > self.x_bot_curr_pos:
-            reward = 1 / fabs(self.x_obj-0.4 - self.x_bot_curr_pos)
-        else:
-            reward = 1 / fabs(self.x_obj+0.4 - self.x_bot_curr_pos)
-        
+        self.env.p.addUserDebugLine(points[0], points[1],
+                                                    lineColorRGB=(1, 0, 0), lineWidth=3, lifeTime=1)
+        self.env.p.addUserDebugLine(points[1], points[2],
+                                                    lineColorRGB=(0, 1, 0), lineWidth=3, lifeTime=1)
 
         # #dbl - distance between bot and line 
         # dbl = self.get_distance(self.x_bot_curr_pos, self.y_bot_curr_pos, self.z_bot_curr_pos, -0.7, self.y_obj, self.z_obj) 
@@ -519,6 +518,7 @@ class SwitchReward(DistanceReward):
             #                             [1, 1, 1], textSize=2.0, lifeTime=0.05, textColorRGB=[0.6, 0.0, 0.6])
         # print(f"\n\n{self.rewards_history}\n\n")
         return reward 
+
     def reset(self):
         """
         Reset current positions of switch, robot, initial position of switch, robot and previous angle of switch.
@@ -596,6 +596,13 @@ class SwitchReward(DistanceReward):
                 self.x_obj += x
                 self.y_obj += y
                 self.z_obj += z
+
+    @staticmethod
+    def get_reward_to_point(x1: float, y1: float, z1: float, x2: float, y2: float, z2: float, koef: float) -> float:
+        if koef >  0:
+            return koef / sqrt((x1-x2)**2 + (y1-y2)**2 + (z1-z2)**2)
+        else:
+            return koef * sqrt((x1-x2)**2 + (y1-y2)**2 + (z1-z2)**2)
     
     @staticmethod
     def get_distance(x1: float, y1: float, z1: float, x2: float, y2: float, z2: float) -> float:
