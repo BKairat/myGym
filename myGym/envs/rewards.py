@@ -448,7 +448,11 @@ class SwitchReward(DistanceReward):
         self.k_a = 1      # coefficient for calculated angle reward
 
         self.reach_line = False
-        self.dist_offset = 0.02
+        self.dist_offset = 0.05
+
+        self.x_bot_last_pos = None
+        self.y_bot_last_pos = None
+        self.z_bot_last_pos = None
 
     def compute(self, observation):
         """
@@ -485,26 +489,27 @@ class SwitchReward(DistanceReward):
         a = self.calc_angle_reward()
 
         reward = 0
-        points  =  [(self.x_obj+0.1, self.y_obj, self.z_obj+0.01),
-                    (self.x_obj-0.1, self.y_obj, self.z_obj+0.01)]
+        points  =  [(self.x_obj+0.2, self.y_obj, self.z_obj+0.01),
+                    (self.x_obj-0.2, self.y_obj, self.z_obj+0.01)]
         
         cur_pos = (self.x_bot_curr_pos, self.y_bot_curr_pos, self.z_bot_curr_pos)
+        last_pos = (self.x_bot_last_pos, self.y_bot_last_pos, self.z_bot_last_pos)
 
         self.env.p.addUserDebugLine(points[0], points[1],
                                                     lineColorRGB=(1, 0, 0), lineWidth=3, lifeTime=1)
 
         if not self.reach_line:
             dist = self.get_distance(points[0], cur_pos)
-            reward = self.lin_eval(dist)
-            if dist <= self.dist_offset:
+            last_dist = self.get_distance(points[0], last_pos)
+            dist_lp = self.get_distance_line_point(points[0], points[1], cur_pos)
+            reward = self.exp_eval(dist, last_dist, 1)
+            if dist <= self.dist_offset or dist_lp <= self.dist_offset:
                 self.reach_line = True
         else:
-            dist = self.get_distance(points[0], cur_pos)
+            dist = self.get_distance(points[1], cur_pos)
+            last_dist = self.get_distance(points[1], last_pos)
             dist_lp = self.get_distance_line_point(points[0], points[1], cur_pos)
-            if dist_lp > self.dist_offset:
-                reward = -0.01
-            else:
-                reward = self.exp_eval(dist, 4)
+            reward = self.exp_eval(dist, last_dist, 4)
 
         # reward = - self.k_w * w - self.k_d * d + self.k_a * a
         #self.task.check_distance_threshold(observation=observation)
@@ -514,9 +519,10 @@ class SwitchReward(DistanceReward):
             self.env.p.addUserDebugLine([self.x_obj, self.y_obj, self.z_obj], gripper_position,
                                         lineColorRGB=(1, 0, 0), lineWidth=3, lifeTime=0.03)
 
-            self.env.p.addUserDebugText(f"reward:{reward:.3f} ",
-                                        [1, 1, 1], textSize=2.0, lifeTime=0.05, textColorRGB=[0.6, 0.0, 0.6])
+            self.env.p.addUserDebugText(f"reward NO:{reward:.3f} " if not self.reach_line else f"reward YES:{reward:.3f} ",
+                                        [0.5, 0.5, 0.5], textSize=2.0, lifeTime=0.05, textColorRGB=[0.6, 0.0, 0.6])
 
+        self.set_last_pos()
         return reward 
 
     def reset(self):
@@ -538,11 +544,25 @@ class SwitchReward(DistanceReward):
         self.y_bot_curr_pos = None
         self.z_bot_curr_pos = None
 
+        self.x_bot_last_pos = None
+        self.y_bot_last_pos = None
+        self.z_bot_last_pos = None
+
         # auxiliary variables
+        self.x_last_curr_pos = None
+        self.y_last_curr_pos = None
+        self.z_last_curr_pos = None
+
         self.offset = None
         self.prev_val = None
 
         self.reach_line = False
+
+    def set_last_pos(self):
+        """set last robot possition"""
+        self.x_bot_last_pos = self.x_bot_curr_pos
+        self.y_bot_last_pos = self.y_bot_curr_pos 
+        self.z_bot_last_pos = self.z_bot_curr_pos 
 
     def set_variables(self, o1, o2):
         """
@@ -578,6 +598,7 @@ class SwitchReward(DistanceReward):
         self.y_bot_curr_pos = o2[1]
         self.z_bot_curr_pos = o2[2]
 
+
     def set_offset(self, x=0.0, y=0.0, z=0.0):
         """
         Set offset position of switch
@@ -608,7 +629,9 @@ class SwitchReward(DistanceReward):
     
 
     # @staticmethod
-    def exp_eval(self, dist : float, max_r: float = 1) -> float:
+    def exp_eval(self, dist : float, last_dist: float, max_r: float = 1) -> float:
+        # if last_dist > dist:
+        #     return 0
         if dist <= self.dist_offset:
             reward = max_r
         else:
@@ -618,8 +641,14 @@ class SwitchReward(DistanceReward):
 
     @staticmethod
     def get_distance(point1: tuple, point2: tuple = (0, 0, 0)) -> float:
-        """ returns distance between two points in 3d, if point2 will not set it will return vector lenght"""
-        return sqrt((point1[0]-point2[0])**2 + (point1[1]-point2[1])**2 + (point1[2]-point2[2])**2) + 0.01
+        """ returns distance between two points in 3d,
+         if point2 will not set it will return vector lenght,
+         if one of points will be not defined return infinity"""
+        a = np.array(point1)
+        b = np.array(point2)
+        if (a == None).any() or (b == None).any():
+            return float('inf')
+        return sqrt((point1[0]-point2[0])**2 + (point1[1]-point2[1])**2 + (point1[2]-point2[2])**2) 
 
 
     @staticmethod
@@ -636,7 +665,7 @@ class SwitchReward(DistanceReward):
         cross = np.cross(dir_vector, plp1_vector)
 
         dist = np.linalg.norm(cross) / np.linalg.norm(dir_vector)
-        return dist + 0.01
+        return dist
 
     def get_positions(self, observation):
         goal_position = observation["goal_state"]
