@@ -448,7 +448,7 @@ class SwitchReward(DistanceReward):
         self.k_a = 1      # coefficient for calculated angle reward
 
         self.reach_line = False
-        self.dist_offset = 0.05
+        self.dist_offset = 0.01
 
         self.x_bot_last_pos = None
         self.y_bot_last_pos = None
@@ -488,8 +488,8 @@ class SwitchReward(DistanceReward):
         d = self.abs_diff()
         a = self.calc_angle_reward()
 
-        points  =  [(self.x_obj+0.2, self.y_obj+0.05, self.z_obj+0.01),
-                    (self.x_obj-0.2, self.y_obj+0.05, self.z_obj+0.01)]
+        points  =  [(self.x_obj+0.2, self.y_obj+0.1, self.z_obj+0.01),
+                    (self.x_obj-0.2, self.y_obj+0.1, self.z_obj+0.01)]
         
         cur_pos = (self.x_bot_curr_pos, self.y_bot_curr_pos, self.z_bot_curr_pos)
         last_pos = (self.x_bot_last_pos, self.y_bot_last_pos, self.z_bot_last_pos)
