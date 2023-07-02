@@ -488,9 +488,8 @@ class SwitchReward(DistanceReward):
         d = self.abs_diff()
         a = self.calc_angle_reward()
 
-        reward = 0
-        points  =  [(self.x_obj+0.2, self.y_obj, self.z_obj+0.01),
-                    (self.x_obj-0.2, self.y_obj, self.z_obj+0.01)]
+        points  =  [(self.x_obj+0.2, self.y_obj+0.05, self.z_obj+0.01),
+                    (self.x_obj-0.2, self.y_obj+0.05, self.z_obj+0.01)]
         
         cur_pos = (self.x_bot_curr_pos, self.y_bot_curr_pos, self.z_bot_curr_pos)
         last_pos = (self.x_bot_last_pos, self.y_bot_last_pos, self.z_bot_last_pos)
@@ -498,18 +497,38 @@ class SwitchReward(DistanceReward):
         self.env.p.addUserDebugLine(points[0], points[1],
                                                     lineColorRGB=(1, 0, 0), lineWidth=3, lifeTime=1)
 
+        rew_1point  =   0
+        rew_line    =   0
+        rew_2point  =   0
+
         if not self.reach_line:
             dist = self.get_distance(points[0], cur_pos)
             last_dist = self.get_distance(points[0], last_pos)
             dist_lp = self.get_distance_line_point(points[0], points[1], cur_pos)
-            reward = self.exp_eval(dist, last_dist, 1)
+            rew_1point = self.lin_eval(dist, 1)
             if dist <= self.dist_offset or dist_lp <= self.dist_offset:
                 self.reach_line = True
         else:
             dist = self.get_distance(points[1], cur_pos)
             last_dist = self.get_distance(points[1], last_pos)
             dist_lp = self.get_distance_line_point(points[0], points[1], cur_pos)
-            reward = self.exp_eval(dist, last_dist, 4)
+            rew_2point = self.lin_eval(dist, 1)
+            rew_line = self.lin_eval(dist_lp, 1)
+
+        reward = rew_1point + rew_line + rew_2point 
+
+        # if not self.reach_line:
+        #     dist = self.get_distance(points[0], cur_pos)
+        #     last_dist = self.get_distance(points[0], last_pos)
+        #     dist_lp = self.get_distance_line_point(points[0], points[1], cur_pos)
+        #     reward = self.exp_eval(dist, last_dist, 1)
+        #     if dist <= self.dist_offset or dist_lp <= self.dist_offset:
+        #         self.reach_line = True
+        # else:
+        #     dist = self.get_distance(points[1], cur_pos)
+        #     last_dist = self.get_distance(points[1], last_pos)
+        #     dist_lp = self.get_distance_line_point(points[0], points[1], cur_pos)
+        #     reward = self.exp_eval(dist, last_dist, 4)
 
         # reward = - self.k_w * w - self.k_d * d + self.k_a * a
         #self.task.check_distance_threshold(observation=observation)
