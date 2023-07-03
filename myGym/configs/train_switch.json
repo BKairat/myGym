@@ -13,7 +13,7 @@
 "robot_action"  :"steps",
 "robot_init"    :[0.0, 0.4, 0.6],
 "max_velocity"  :10,
-"max_force"     :200,
+"max_force"     :0,
 "action_repeat" :1,
 
 #Task
@@ -38,7 +38,7 @@
 #Train
 "train_framework"   :"tensorflow",
 "algo"              :"ppo2",
-"num_networks" : 1,
+"num_networks" : 3,
 "max_episode_steps" :512,
 "algo_steps"        :512,
 "steps"             :1000000,

@@ -538,8 +538,11 @@ class SwitchReward(DistanceReward):
             self.env.p.addUserDebugLine([self.x_obj, self.y_obj, self.z_obj], gripper_position,
                                         lineColorRGB=(1, 0, 0), lineWidth=3, lifeTime=0.03)
 
-            self.env.p.addUserDebugText(f"reward NO:{reward:.3f} " if not self.reach_line else f"reward YES:{reward:.3f} ",
+            self.env.p.addUserDebugText(f"{cur_pos[0]:.3f} {cur_pos[1]:.3f} {cur_pos[2]:.3f}",
                                         [0.5, 0.5, 0.5], textSize=2.0, lifeTime=0.05, textColorRGB=[0.6, 0.0, 0.6])
+
+            # self.env.p.addUserDebugText(f"reward NO:{reward:.3f} " if not self.reach_line else f"reward YES:{reward:.3f} ",
+            #                             [0.5, 0.5, 0.5], textSize=2.0, lifeTime=0.05, textColorRGB=[0.6, 0.0, 0.6])
 
         self.set_last_pos()
         return reward 
@@ -1435,7 +1438,7 @@ class TwoStagePnP(DualPoke):
         if self.last_owner != 1:
             self.last_place_dist = dist
         reward = self.last_place_dist - dist
-        reward = reward * 10
+        reward = reThreeStageSwipeRewardward * 10
         self.env.p.addUserDebugText(f"Reward:{reward}", [0.7,0.7,1.0], lifeTime=0.1, textColorRGB=[0,125,0])
         self.last_place_dist = dist
         if self.last_owner == 1 and dist < 0.1:
@@ -1527,7 +1530,8 @@ class ThreeStagePnP(TwoStagePnP):
         if self.last_place_dist is None or self.last_owner != 2:
             self.last_place_dist = dist
         reward = self.last_place_dist - dist
-        reward = reward * 10
+        reward = reward * 10       
+        self.env.p.addUserDebugLine(robot_cur_pos, goal_pos, lifeTime=0.5, lineColorRGB = (1,1,1))
         self.env.p.addUserDebugText(f"Reward:{reward}", [0.7,0.7,1.2], lifeTime=0.1, textColorRGB=[0,125,0])
         self.last_place_dist = dist
         
@@ -1564,12 +1568,7 @@ class ThreeStagePnP(TwoStagePnP):
     def object_lifted(self, object, object_before_lift):
         lifted_position = [object_before_lift[0], object_before_lift[1], object_before_lift[2]+0.1] # position of object before lifting but hightened with its height
         self.task.calc_distance(object, lifted_position)
-        if object[2] < 0.079:
-            self.lifted = False # object has fallen
-            self.object_before_lift = object
-        else:
-            self.lifted = True
-            return True
+        if object[2] < 0.079:       self.env.p.addUserDebugLine(robot_cur_pos, goal_pos, lifeTime=0.5, lineColorRGB = (1,1,1))
         return False
 
     def object_above_goal(self, object, goal):
@@ -1579,6 +1578,115 @@ class ThreeStagePnP(TwoStagePnP):
         if distance < 0.1:
             return True
         return False
+# ========================================================================================================================================
+# ========================================================================================================================================
+# ========================================================================================================================================
+# ========================================================================================================================================
+
+class ThreeStageSwitchReward(ThreeStagePnP):
+
+    def reset(self):
+        """
+        Reset stored value of distance between 2 objects. Call this after the end of an episode.
+        """
+        self.last_owner     =   None
+        self.line_was_reached   =   False
+        self.current_network=   0
+        self.network_rewards=   [0] * self.num_networks
+        self.dist_offset = 0.05
+    
+    def compute(self, observation=None):
+        robot_cur_pos = observation["actual_state"]
+        goal_pos = observation["goal_state"]
+
+        points =    [(goal_pos[0]+0.3, goal_pos[1], goal_pos[2]+0.2),
+                     (goal_pos[0]-0.3, goal_pos[1], goal_pos[2]+0.2)]
+
+        distances = [self.get_distance(points[0], robot_cur_pos),
+                    self.get_distance_line_point(points[0], points[1], robot_cur_pos),
+                    self.get_distance(robot_cur_pos, goal_pos)]
+
+        owner = self.decide(points, robot_cur_pos)
+
+        target  = [[distances[0], 1], [distances[1], 0], [distances[2], 2]][owner]
+        reward = [self.lin_eval, self.lin_eval, self.lin_eval][owner](*target)
+
+        self.env.p.addUserDebugLine(points[0], points[1], lifeTime=0.5, lineColorRGB = (1,1,1))
+        self.last_owner = owner
+        self.task.check_goal()
+        self.rewards_history.append(reward)
+
+        self.env.p.addUserDebugText(f"owner: {owner}, reward: {round(reward, 3)}, {distances[0]<self.dist_offset}", [0.63,1,0.5], lifeTime=0.5, textColorRGB=[125,0,0])
+        return reward
+    
+    def decide(self, points: list, rob_cur_pos: tuple) -> int:
+        """
+        0 state - go to the point
+        1 state - go to the line
+        2 state - go to the goal
+        """
+        print("decide")
+        owner = 0 
+        if (self.get_distance(points[0], rob_cur_pos) < self.dist_offset and not self.line_was_reached) or (self.get_distance_line_point(points[0], points[1], rob_cur_pos) <  self.dist_offset and self.line_was_reached):
+            self.line_was_reached = True
+            owner = 2
+        elif self.line_was_reached and self.get_distance_line_point(points[0], points[1], rob_cur_pos) >  self.offset:
+            owner = 1
+        self.last_owner = owner
+        return owner
+    
+    # @staticmethod
+    def lin_eval(self, dist : float, max_r: float = 1) -> float:
+        if dist <= self.dist_offset:
+            reward = max_r
+        else:
+            b = max_r + self.dist_offset
+            reward = b - dist 
+        return reward
+    
+
+    # @staticmethod
+    def exp_eval(self, dist : float, last_dist: float, max_r: float = 1) -> float:
+        # if last_dist > dist:
+        #     return 0
+        if dist <= self.dist_offset:
+            reward = max_r
+        else:
+            reward = exp(self.dist_offset - dist) + (max_r - 1) 
+        return reward
+
+
+    @staticmethod
+    def get_distance(point1: tuple, point2: tuple = (0, 0, 0)) -> float:
+        """ returns distance between two points in 3d,
+         if point2 will not set it will return vector lenght,
+         if one of points will be not defined return infinity"""
+        a = np.array(point1)
+        b = np.array(point2)
+        if (a == None).any() or (b == None).any():
+            return float('inf')
+        return sqrt((point1[0]-point2[0])**2 + (point1[1]-point2[1])**2 + (point1[2]-point2[2])**2) 
+
+
+    @staticmethod
+    def get_distance_line_point(lpoint1: tuple, lpoint2: tuple, point: tuple) -> float:
+        """calculate distance between line (represented by two points) and point"""
+        dir_vector = np.array( [lpoint2[0]-lpoint1[0],
+                                lpoint2[1]-lpoint1[1],
+                                lpoint2[2]-lpoint1[2]] )
+        
+        plp1_vector = np.array( [lpoint1[0]-point[0],
+                                lpoint1[1]-point[1],
+                                lpoint1[2]-point[2]] )
+
+        cross = np.cross(dir_vector, plp1_vector)
+
+        dist = np.linalg.norm(cross) / np.linalg.norm(dir_vector)
+        return dist
+# ========================================================================================================================================
+# ========================================================================================================================================
+# ========================================================================================================================================
+# ========================================================================================================================================
 
 class ThreeStagePnPRot(ThreeStagePnP):
 
