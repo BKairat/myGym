@@ -13,7 +13,7 @@
 "robot_action"  :"steps",
 "robot_init"    :[0.0, 0.4, 0.6],
 "max_velocity"  :10,
-"max_force"     :0,
+"max_force"     :200,
 "action_repeat" :1,
 
 #Task
@@ -41,12 +41,12 @@
 "num_networks" : 3,
 "max_episode_steps" :512,
 "algo_steps"        :512,
-"steps"             :100000,
+"steps"             :50000,
 "pretrained_model"  :null,
 "multiprocessing"   :false,
 #Evaluation
-"eval_freq"     :90000,
-"eval_episodes" :30,
+"eval_freq"     :50000,
+"eval_episodes" :100,
 #Saving and logging
 "logdir"    :"trained_models/switch",
 "record"    :0
