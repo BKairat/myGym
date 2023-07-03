@@ -1589,7 +1589,7 @@ class ThreeStageSwitchReward(ThreeStagePnP):
         """
         Reset stored value of distance between 2 objects. Call this after the end of an episode.
         """
-        self.last_owner     =   None
+        self.last_owner         =   None
         self.line_was_reached   =   False
         self.current_network=   0
         self.network_rewards=   [0] * self.num_networks
@@ -1625,12 +1625,12 @@ class ThreeStageSwitchReward(ThreeStagePnP):
         1 state - go to the line
         2 state - go to the goal
         """
-        print("decide")
+        # print("decide")
         owner = 0 
         if (self.get_distance(points[0], rob_cur_pos) < self.dist_offset and not self.line_was_reached) or (self.get_distance_line_point(points[0], points[1], rob_cur_pos) <  self.dist_offset and self.line_was_reached):
             self.line_was_reached = True
             owner = 2
-        elif self.line_was_reached and self.get_distance_line_point(points[0], points[1], rob_cur_pos) >  self.offset:
+        elif self.line_was_reached and self.get_distance_line_point(points[0], points[1], rob_cur_pos) >  self.dist_offset:
             owner = 1
         self.last_owner = owner
         return owner
