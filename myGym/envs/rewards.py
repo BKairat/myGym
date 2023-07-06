@@ -438,112 +438,69 @@ class SwitchReward(DistanceReward):
         self.z_bot_curr_pos = None
 
         # auxiliary variables
-        self.offset = None
-        self.prev_val = None
-        self.debug = True
+        self.offset     = None
+        self.prev_val   = None
+        self.debug      = True
 
         # coefficients used to calculate reward
         self.k_w = 0.4    # coefficient for distance between actual position of robot's gripper and generated line
         self.k_d = 0.3    # coefficient for absolute distance between gripper and end position
         self.k_a = 1      # coefficient for calculated angle reward
 
-        self.reach_line = False
-        self.dist_offset = 0.01
+        self.reach_line     = False
+        self.dist_offset    = 0.01
 
         self.x_bot_last_pos = None
         self.y_bot_last_pos = None
         self.z_bot_last_pos = None
 
+        self.bonus_reward   = 10
+
+        self.right_bonus    = False
+        self.left_bonus     = False
+
     def compute(self, observation):
-        """
-        Compute reward signal based on distance between 2 objects, angle of switch and difference between point and line
-        (function used for that: calc_direction_3d()).
-        The position of the objects must be present in observation.
-        Params:
-            :param observation: (list) Observation of the environment
-        Returns:
-            :return reward: (float) Reward signal for the environment
-        """
-        o1 = observation["goal_state"]
-        gripper_position = self.env.robot.get_accurate_gripper_position()
-        self.set_variables(o1, gripper_position)    # save local positions of task_object and gripper to global positions
-        self.set_offset(x=-0.1, z=0.25)
-        if self.x_obj > 0:
-            if self.debug:
-                self.env.p.addUserDebugLine([self.x_obj, self.y_obj, self.z_obj], [-0.7, self.y_obj, self.z_obj],
-                                            lineColorRGB=(0, 0.5, 1), lineWidth=3, lifeTime=1)
-            w = self.calc_direction_3d(self.x_obj, self.y_obj, self.z_obj, 0.7, self.y_obj, self.z_obj,
-                                       self.x_bot_curr_pos,
-                                       self.y_bot_curr_pos, self.z_bot_curr_pos)
+        goal_pos            = observation["goal_state"]
+        gripper_position    = observation["actual_state"]
+        self.set_variables(goal_pos, gripper_position)    # save local positions of task_object and gripper to global positions
 
-        else:
-            # if self.debug:
-            #     self.env.p.addUserDebugLine([self.x_obj, self.y_obj, self.z_obj], [0.7, self.y_obj, self.z_obj],
-            #                                 lineColorRGB=(0, 0.5, 1), lineWidth=3, lifeTime=1)
-
-            w = self.calc_direction_3d(self.x_obj, self.y_obj, self.z_obj, -0.7, self.y_obj, self.z_obj,
-                                       self.x_bot_curr_pos,
-                                       self.y_bot_curr_pos, self.z_bot_curr_pos)
-
-        d = self.abs_diff()
-        a = self.calc_angle_reward()
-
-        points  =  [(self.x_obj+0.2, self.y_obj+0.1, self.z_obj+0.01),
-                    (self.x_obj-0.2, self.y_obj+0.1, self.z_obj+0.01)]
+        points   =  [(self.x_obj+0.2, self.y_obj, self.z_obj+0.2),
+                    (self.x_obj-0.2, self.y_obj, self.z_obj+0.2)]
         
-        cur_pos = (self.x_bot_curr_pos, self.y_bot_curr_pos, self.z_bot_curr_pos)
-        last_pos = (self.x_bot_last_pos, self.y_bot_last_pos, self.z_bot_last_pos)
+        cur_pos  =  (self.x_bot_curr_pos, self.y_bot_curr_pos, self.z_bot_curr_pos)
+        last_pos =  (self.x_bot_last_pos, self.y_bot_last_pos, self.z_bot_last_pos)
 
-        self.env.p.addUserDebugLine(points[0], points[1],
-                                                    lineColorRGB=(1, 0, 0), lineWidth=3, lifeTime=1)
+        self.env.p.addUserDebugLine(points[0], points[1], lineColorRGB=(1, 0, 0), lineWidth=3, lifeTime=1)
+
+        distances=  [self.get_distance(points[0], cur_pos), self.get_distance(points[1], cur_pos),
+                     self.get_distance(goal_pos, cur_pos), self.get_distance_line_point(points[0], points[1], cur_pos)]
+        
+        last_dist=  [self.get_distance(points[0], last_pos), self.get_distance(points[1], last_pos),
+                     self.get_distance(goal_pos, last_pos), self.get_distance_line_point(points[0], points[1], last_pos)]
 
         rew_1point  =   0
         rew_line    =   0
         rew_2point  =   0
 
         if not self.reach_line:
-            dist = self.get_distance(points[0], cur_pos)
-            last_dist = self.get_distance(points[0], last_pos)
-            dist_lp = self.get_distance_line_point(points[0], points[1], cur_pos)
-            rew_1point = self.lin_eval(dist, 1)
-            if dist <= self.dist_offset or dist_lp <= self.dist_offset:
+            rew_1point = self.lin_eval(distances[0]) if distances[0] < last_dist[0] else -1/self.lin_eval(distances[0]) 
+            if distances[3] <= self.dist_offset:
                 self.reach_line = True
         else:
-            dist = self.get_distance(points[1], cur_pos)
-            last_dist = self.get_distance(points[1], last_pos)
-            dist_lp = self.get_distance_line_point(points[0], points[1], cur_pos)
-            rew_2point = self.lin_eval(dist, 1)
-            rew_line = self.lin_eval(dist_lp, 1)
+            rew_line    =   self.lin_eval(distances[3]) if distances[3] < last_dist[3] else -1/self.lin_eval(distances[3]) 
+            rew_2point  =   self.lin_eval(distances[1]) if distances[1] < last_dist[1] else -1/self.lin_eval(distances[1]) 
 
-        reward = rew_1point + rew_line + rew_2point 
+        reward = rew_1point + rew_line + rew_2point + self.get_bonus(*distances)
 
-        # if not self.reach_line:
-        #     dist = self.get_distance(points[0], cur_pos)
-        #     last_dist = self.get_distance(points[0], last_pos)
-        #     dist_lp = self.get_distance_line_point(points[0], points[1], cur_pos)
-        #     reward = self.exp_eval(dist, last_dist, 1)
-        #     if dist <= self.dist_offset or dist_lp <= self.dist_offset:
-        #         self.reach_line = True
-        # else:
-        #     dist = self.get_distance(points[1], cur_pos)
-        #     last_dist = self.get_distance(points[1], last_pos)
-        #     dist_lp = self.get_distance_line_point(points[0], points[1], cur_pos)
-        #     reward = self.exp_eval(dist, last_dist, 4)
-
-        # reward = - self.k_w * w - self.k_d * d + self.k_a * a
-        #self.task.check_distance_threshold(observation=observation)
-        self.task.check_goal()
-        self.rewards_history.append(reward)
         if self.debug:
             self.env.p.addUserDebugLine([self.x_obj, self.y_obj, self.z_obj], gripper_position,
-                                        lineColorRGB=(1, 0, 0), lineWidth=3, lifeTime=0.03)
+                                        lineColorRGB=(1, 0, 0), lineWidth=3, lifeTime=0.05)
 
-            self.env.p.addUserDebugText(f"{cur_pos[0]:.3f} {cur_pos[1]:.3f} {cur_pos[2]:.3f}",
+            self.env.p.addUserDebugText(f"line : {self.reach_line} reward: {reward}",
                                         [0.5, 0.5, 0.5], textSize=2.0, lifeTime=0.05, textColorRGB=[0.6, 0.0, 0.6])
 
-            # self.env.p.addUserDebugText(f"reward NO:{reward:.3f} " if not self.reach_line else f"reward YES:{reward:.3f} ",
-            #                             [0.5, 0.5, 0.5], textSize=2.0, lifeTime=0.05, textColorRGB=[0.6, 0.0, 0.6])
-
+        self.task.check_goal()
+        self.rewards_history.append(reward)
         self.set_last_pos()
         return reward 
 
@@ -579,6 +536,9 @@ class SwitchReward(DistanceReward):
         self.prev_val = None
 
         self.reach_line = False
+
+        self.right_bonus    = False
+        self.left_bonus     = False
 
     def set_last_pos(self):
         """set last robot possition"""
@@ -620,6 +580,16 @@ class SwitchReward(DistanceReward):
         self.y_bot_curr_pos = o2[1]
         self.z_bot_curr_pos = o2[2]
 
+    def get_bonus(self, dist_1:float, dist_2: float, dist_g: float, dist_line: float) -> float:
+        if dist_1 < dist_2:
+            if dist_g < 0.05 and dist_line < self.dist_offset and not self.right_bonus:
+                self.right_bonus = True
+                return self.bonus_reward
+        else:
+            if dist_g < 0.05 and dist_line < self.dist_offset and not self.left_bonus:
+                self.left_bonus = True
+                return self.bonus_reward
+        return 0
 
     def set_offset(self, x=0.0, y=0.0, z=0.0):
         """
@@ -661,6 +631,7 @@ class SwitchReward(DistanceReward):
         return reward
 
 
+
     @staticmethod
     def get_distance(point1: tuple, point2: tuple = (0, 0, 0)) -> float:
         """ returns distance between two points in 3d,
@@ -676,6 +647,9 @@ class SwitchReward(DistanceReward):
     @staticmethod
     def get_distance_line_point(lpoint1: tuple, lpoint2: tuple, point: tuple) -> float:
         """calculate distance between line (represented by two points) and point"""
+        point = np.array(point)
+        if (point == None).any():
+            return float('inf')
         dir_vector = np.array( [lpoint2[0]-lpoint1[0],
                                 lpoint2[1]-lpoint1[1],
                                 lpoint2[2]-lpoint1[2]] )
@@ -1591,9 +1565,9 @@ class ThreeStageSwitchReward(ThreeStagePnP):
         """
         self.last_owner         =   None
         self.line_was_reached   =   False
-        self.current_network=   0
-        self.network_rewards=   [0] * self.num_networks
-        self.dist_offset = 0.05
+        self.current_network    =   0
+        self.network_rewards    =   [0] * self.num_networks
+        self.dist_offset        =   0.05
     
     def compute(self, observation=None):
         robot_cur_pos = observation["actual_state"]
@@ -1608,7 +1582,7 @@ class ThreeStageSwitchReward(ThreeStagePnP):
 
         owner = self.decide(points, robot_cur_pos)
 
-        target  = [[distances[0], 1], [distances[1], 0], [distances[2], 2]][owner]
+        target  = [[distances[0], 1], [distances[1], 0], [distances[2], 2, distances[1]]][owner]
         reward = [self.lin_eval, self.lin_eval, self.lin_eval][owner](*target)
 
         self.env.p.addUserDebugLine(points[0], points[1], lifeTime=0.5, lineColorRGB = (1,1,1))
@@ -1630,18 +1604,20 @@ class ThreeStageSwitchReward(ThreeStagePnP):
         if (self.get_distance(points[0], rob_cur_pos) < self.dist_offset and not self.line_was_reached) or (self.get_distance_line_point(points[0], points[1], rob_cur_pos) <  self.dist_offset and self.line_was_reached):
             self.line_was_reached = True
             owner = 2
-        elif self.line_was_reached and self.get_distance_line_point(points[0], points[1], rob_cur_pos) >  self.dist_offset:
-            owner = 1
+        # elif self.line_was_reached and self.get_distance_line_point(points[0], points[1], rob_cur_pos) >  self.dist_offset:
+        #     owner = 1
         self.last_owner = owner
         return owner
     
     # @staticmethod
-    def lin_eval(self, dist : float, max_r: float = 1) -> float:
+    def lin_eval(self, dist : float, max_r: float = 1, distLine: float = 0) -> float:
         if dist <= self.dist_offset:
             reward = max_r
         else:
             b = max_r + self.dist_offset
             reward = b - dist 
+        if distLine > self.dist_offset:
+            reward = -distLine*10
         return reward
     
 
