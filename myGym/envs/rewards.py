@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 from stable_baselines import results_plotter
 import os
 import math
-from math import sqrt, fabs, exp
+from math import sqrt, fabs, exp, pi
 from myGym.utils.vector import Vector
 import random
 
@@ -532,7 +532,7 @@ class SwitchReward(DistanceReward):
             return -fabs(x-last_pos_on_line)
         else:
             self.last_pos_on_line = x
-        return normap_dist_func(x)
+        return self.normap_dist_func(x)
 
     def get_angle_reward(self):
         if self.last_angle == None:
@@ -540,52 +540,6 @@ class SwitchReward(DistanceReward):
         delta = self.get_angle() - self.last_angle
         self.last_angle = self.get_angle()
         return 100*(delta)/(20)
-
-
-    # def compute(self, observation):
-    #     goal_pos            = observation["goal_state"]
-    #     gripper_position    = observation["actual_state"]
-    #     self.set_variables(goal_pos, gripper_position)    # save local positions of task_object and gripper to global positions
-
-    #     points   =  [(self.x_obj+0.2, self.y_obj, self.z_obj+0.2),
-    #                 (self.x_obj-0.2, self.y_obj, self.z_obj+0.2)]
-        
-    #     cur_pos  =  (self.x_bot_curr_pos, self.y_bot_curr_pos, self.z_bot_curr_pos)
-    #     last_pos =  (self.x_bot_last_pos, self.y_bot_last_pos, self.z_bot_last_pos)
-
-    #     self.env.p.addUserDebugLine(points[0], points[1], lineColorRGB=(1, 0, 0), lineWidth=3, lifeTime=1)
-
-    #     distances=  [self.get_distance(points[0], cur_pos), self.get_distance(points[1], cur_pos),
-    #                  self.get_distance(goal_pos, cur_pos), self.get_distance_line_point(points[0], points[1], cur_pos)]
-        
-    #     last_dist=  [self.get_distance(points[0], last_pos), self.get_distance(points[1], last_pos),
-    #                  self.get_distance(goal_pos, last_pos), self.get_distance_line_point(points[0], points[1], last_pos)]
-
-    #     rew_1point  =   0
-    #     rew_line    =   0
-    #     rew_2point  =   0
-
-    #     if not self.reach_line:
-    #         rew_1point = self.lin_eval(distances[0]) if distances[0] < last_dist[0] else -1/self.lin_eval(distances[0]) 
-    #         if distances[3] <= self.dist_offset:
-    #             self.reach_line = True
-    #     else:
-    #         rew_line    =   self.lin_eval(distances[3]) if distances[3] < last_dist[3] else -1/self.lin_eval(distances[3]) 
-    #         rew_2point  =   self.lin_eval(distances[1]) if distances[1] < last_dist[1] else -1/self.lin_eval(distances[1]) 
-
-    #     reward = rew_1point + rew_line + rew_2point + self.get_bonus(*distances)
-
-    #     if self.debug:
-    #         self.env.p.addUserDebugLine([self.x_obj, self.y_obj, self.z_obj], gripper_position,
-    #                                     lineColorRGB=(1, 0, 0), lineWidth=3, lifeTime=0.05)
-
-    #         self.env.p.addUserDebugText(f"line : {self.reach_line} reward: {reward}",
-    #                                     [0.5, 0.5, 0.5], textSize=2.0, lifeTime=0.05, textColorRGB=[0.6, 0.0, 0.6])
-
-    #     self.task.check_goal()
-    #     self.rewards_history.append(reward)
-    #     self.set_last_pos()
-    #     return reward 
 
     def reset(self):
         """
@@ -644,7 +598,7 @@ class SwitchReward(DistanceReward):
         if self.x_obj is None:
             self.x_obj = o1[0]
 
-        if self.y_obj is None:get_bonus
+        if self.y_obj is None:
             self.y_obj = o1[1]
 
         if self.z_obj is None:
@@ -1089,100 +1043,224 @@ class TurnReward(SwitchReward):
         return math.acos(np.dot(v1, v2)/(self.count_vector_norm(v1)*self.count_vector_norm(v2)))
 
 
+
 class PokeReachReward(SwitchReward):
 
     def __init__(self, env, task):
         super(PokeReachReward, self).__init__(env, task)
 
-        self.threshold = 0.1
-        self.last_distance = None
-        self.last_gripper_distance = None
-        self.moved = False
-        self.prev_poker_position = [None]*3
+        self.cube_offest               = 0.1
+        self.dist_offset               = 0.05
+
+        self.last_points               = None 
+        self.point_was_reached         = False
 
     def reset(self):
-        """
-        Reset stored value of distance between 2 objects. Call this after the end of an episode.
-        """
-        self.last_distance = None
-        self.last_gripper_distance = None
-        self.moved = False
-        self.prev_poker_position = [None]*3
-
+        self.last_points               = None
+        self.point_was_reached         = False
+        
+# -------------------------------------------------------------------------------------------------------------------------------
+    
     def compute(self, observation=None):
-        poker_position, distance, gripper_distance = self.init(observation)
-        self.task.check_goal()
-        reward = self.count_reward(poker_position, distance, gripper_distance)
-        self.finish(observation, poker_position, distance, gripper_distance, reward)
-        return reward
+        goal_pos, cube_pos, gripper = self.set_points(observation)
+        cube_last_pos, gripper_last = self.last_points if self.last_points != None else [cube_pos, gripper]
 
-    def init(self, observation):
-        # load positions
-        goal_position = observation["goal_state"]
-        poker_position = observation["actual_state"]
-        gripper_name = [x for x in self.env.task.obs_template["additional_obs"] if "endeff" in x][0]
-        gripper_position = self.env.robot.get_accurate_gripper_position()
+        point_grg = self.get_point_grg(goal_pos, cube_pos)
 
-        for i in range(len(poker_position)):
-            poker_position[i] = round(poker_position[i], 4)
+        state = [(gripper, point_grg),(gripper, cube_pos)][int(self.point_was_reached)]
+        state_last = [(gripper_last, point_grg),(gripper_last, cube_pos)][int(self.point_was_reached)]
 
-        distance = round(self.env.task.calc_distance(goal_position, poker_position), 7)
-        gripper_distance = self.env.task.calc_distance(poker_position, gripper_position)
-        self.initialize_positions(poker_position, distance, gripper_distance)
+        cur_dist = self.get_distance(*state)
+        if cur_dist <= self.dist_offset:
+            self.line_was_reached = True
+        last_dist = self.get_distance(*state_last)
+        dist_cube_goal = self.get_gistance()
 
-        return poker_position, distance, gripper_distance
 
-    def finish(self, observation, poker_position, distance, gripper_distance, reward):
-        self.update_positions(poker_position, distance, gripper_distance)
-        self.check_strength_threshold()
-        self.task.check_distance_threshold(observation)
+        rew_point = self.exp_eval(cur_dist) if cur_dist < las_dist else self.lin_penalty(last_dist, min_penalty = 1)
+        rew_angle = self.get_reward_angle(goal_pos, cube_last_pos, cube_pos)
+
+        reward = rew_point + rew_angle
+
+        self.set_last_positions(cube_pos, gripper)
         self.rewards_history.append(reward)
-
-    def count_reward(self, poker_position, distance, gripper_distance):
-        reward = 0
-        if self.check_motion(poker_position):
-            reward += self.last_gripper_distance - gripper_distance
-        reward += 100*(self.last_distance - distance)
+        self.task.check_goal()
         return reward
 
-    def initialize_positions(self, poker_position, distance, gripper_distance):
-        if self.last_distance is None:
-            self.last_distance = distance
+# ---------------------------
+    def set_points(self, observation) -> tuple:
+        return np.array(observation["goal_state"]), np.array(observation["actual_state"]), np.array(observation["additional_obs"]["endeff_xyz"])
+    
+    def lin_penalty(self, dist: float, min_penalty: float = 0, k: float = 1) -> float:
+        return -dist*fabs(k) - fabs(min_penalty)
 
-        if self.last_gripper_distance is None:
-            self.last_gripper_distance = gripper_distance
+    def get_point_grg(self, point1: 'numpy.ndarray', point2: 'numpy.ndarray') -> 'numpy.ndarray':
+        dir_unit_vctor = (point2-point1) / np.linalg.norm(point2-point1)
+        point3 = dir_unit_vctor*self.cube_offest + point2
+        return point3
+    
+    def set_last_positions(self, cube: 'numpy.ndarray', gripper: 'numpy.ndarray'):
+        self.last_points = [cube, gripper]
+    
+    @staticmethod
+    def get_unit_vector(tail: 'numpy.ndarray', head: 'numpy.ndarray') -> 'numpy.ndarray':
+        vector = head - tail
+        return vector/np.linalg.norm(vector)
 
-        if self.prev_poker_position[0] is None:
-            self.prev_poker_position = poker_position
+    @staticmethod
+    def get_angle_2vec(vecU1: 'numpy.ndarray', vecU2: 'numpy.ndarray') -> float:
+        M = np.array([[vecU1[0], -vecU1[1]], [vecU1[1], vecU1[0]]])
+        cos, sin = np.linalg.solve(M, vecU2)
+        return -asin(sin)*180/pi
 
-    def update_positions(self, poker_position, distance, gripper_distance):
-        self.last_distance = distance
-        self.last_gripper_distance = gripper_distance
-        self.prev_poker_position = poker_position
+    def get_angle_reward(vecU1: 'numpy.ndarray', vecU2: 'numpy.ndarray') -> float:
+        angle = fabs(get_angle_2vec(vecU1, vecU2))
+        if angle < 20:
 
-    def check_strength_threshold(self):
-        if self.task.check_object_moved(self.env.task_objects["actual_state"], 2):
-            self.env.episode_over = True
-            self.env.episode_failed = True
-            self.env.episode_info = "poke too strong"
+        return 
 
-    def is_poker_moving(self, poker):
-        if self.prev_poker_position[0] == poker[0] and self.prev_poker_position[1] == poker[1]:
-            return False
-        elif self.env.episode_steps > 25:   # it slightly moves on the beginning
-            self.moved = True
-        return True
+# ---------------------------
 
-    def check_motion(self, poker):
-        if not self.is_poker_moving(poker) and self.moved:
-            self.env.episode_over = True
-            self.env.episode_failed = True
-            self.env.episode_info = "too weak poke"
-            return True
-        elif self.is_poker_moving(poker):
-            return False
-        return True
-# dual rewards
+
+# class PokeReachReward(SwitchReward):
+
+#     def __init__(self, env, task):
+#         super(PokeReachReward, self).__init__(env, task)
+
+#         self.threshold                 = 0.1
+#         self.cube_offest               = 0.1
+#         self.last_distance             = None
+#         self.last_gripper_distance     = None
+#         self.last_points               = None
+#         self.moved                     = False
+#         self.point_was_reached         = False
+#         self.prev_poker_position       = [None]*3
+
+#     def reset(self):
+#         """
+#         Reset stored value of distance between 2 objects. Call this after the end of an episode.
+#         """
+#         self.last_distance             = None
+#         self.last_gripper_distance     = None
+#         self.last_points               = None
+#         self.moved                     = False
+#         self.point_was_reached         = False
+#         self.prev_poker_position       = [None]*3
+        
+# # -------------------------------------------------------------------------------------------------------------------------------
+    
+#     def compute(self, observation=None):
+#         goal_pos, cube_pos, gripper = self.set_points(observation)
+
+#         point_grg = self.get_point_grg(goal_pos, cube_pos)
+#         self.env.p.addUserDebugLine(goal_pos, point_grg, lifeTime=0.1)
+#         self.task.check_goal()
+
+#         rew_point = 0
+#         rew_angle = 0
+#         rew_distC = 0
+
+#         if self.point_was_reached:
+#             rew_point = self.exp_eval(self.get_distance(gripper, cube_pos)) 
+#         else:
+
+
+#         reward = rew_point + rew_angle + rew_dist
+#         self.rewards_history.append(reward)
+#         self.finish(observation, poker_position, distance, gripper_distance, reward)
+#         return reward
+#     # def compute(self, observation=None):
+#     #     poker_position, distance, gripper_distance = self.init(observation)
+
+
+#     #     self.task.check_goal()
+#     #     # print(self.last_distance)
+#     #     reward = self.count_reward(poker_position, distance, gripper_distance)
+#     #     self.finish(observation, poker_position, distance, gripper_distance, reward)
+#     #     print(reward)
+#     #     return reward
+
+# # ---------------------------
+#     def set_points(self, observation) -> tuple:
+#         return observation["goal_state"], observation["actual_state"], observation["additional_obs"]["endeff_xyz"]
+    
+#     # def lin_penalty(self, )
+
+#     def get_point_grg(self, point1: tuple, point2: tuple) -> tuple:
+#         point1 = np.array(point1)
+#         point2 = np.array(point2)
+#         dir_unit_vctor = (point2-point1) / np.linalg.norm(point2-point1)
+#         point3 = dir_unit_vctor*self.cube_offest + point2
+#         return tuple(point3)
+# # ---------------------------
+
+#     def init(self, observation):
+#         # load positions
+#         goal_position = observation["goal_state"]
+#         poker_position = observation["actual_state"]
+#         gripper_name = [x for x in self.env.task.obs_template["additional_obs"] if "endeff" in x][0]
+#         gripper_position = self.env.robot.get_accurate_gripper_position()
+
+#         for i in range(len(poker_position)):
+#             poker_position[i] = round(poker_position[i], 4)
+
+#         distance = round(self.env.task.calc_distance(goal_position, poker_position), 7)
+#         gripper_distance = self.env.task.calc_distance(poker_position, gripper_position)
+#         self.initialize_positions(poker_position, distance, gripper_distance)
+
+#         return poker_position, distance, gripper_distance
+
+#     def finish(self, observation, poker_position, distance, gripper_distance, reward):
+#         self.update_positions(poker_position, distance, gripper_distance)
+#         self.check_strength_threshold()
+#         self.task.check_distance_threshold(observation)
+#         self.rewards_history.append(reward)
+
+#     def count_reward(self, poker_position, distance, gripper_distance):
+#         reward = 0
+#         if self.check_motion(poker_position):
+#             reward += self.last_gripper_distance - gripper_distance
+#         reward += 100*(self.last_distance - distance)
+#         return reward
+
+#     def initialize_positions(self, poker_position, distance, gripper_distance):
+#         if self.last_distance is None:
+#             self.last_distance = distance
+
+#         if self.last_gripper_distance is None:
+#             self.last_gripper_distance = gripper_distance
+
+#         if self.prev_poker_position[0] is None:
+#             self.prev_poker_position = poker_position
+
+#     def update_positions(self, poker_position, distance, gripper_distance):
+#         self.last_distance = distance
+#         self.last_gripper_distance = gripper_distance
+#         self.prev_poker_position = poker_position
+
+#     def check_strength_threshold(self):
+#         if self.task.check_object_moved(self.env.task_objects["actual_state"], 2):
+#             self.env.episode_over = True
+#             self.env.episode_failed = True
+#             self.env.episode_info = "poke too strong"
+
+#     def is_poker_moving(self, poker):
+#         if self.prev_poker_position[0] == poker[0] and self.prev_poker_position[1] == poker[1]:
+#             return False
+#         elif self.env.episode_steps > 25:   # it slightly moves on the beginning
+#             self.moved = True
+#         return True
+
+#     def check_motion(self, poker):
+#         if not self.is_poker_moving(poker) and self.moved:
+#             self.env.episode_over = True
+#             self.env.episode_failed = True
+#             self.env.episode_info = "too weak poke"
+#             return True
+#         elif self.is_poker_moving(poker):
+#             return False
+#         return True
+# # dual rewards
 
 class DualPoke(PokeReachReward):
     """
@@ -1334,7 +1412,7 @@ class DualPoke(PokeReachReward):
         return distance
 
 
-# pick and place rewards
+# # pick and place rewards
 class SingleStagePnP(DistanceReward):
     """
     Pick and place with simple Distance reward. The gripper is operated automatically.
