@@ -2407,35 +2407,127 @@ class TwoStagePnPPoke(TwoStagePnP):
 
     def __init__(self, env, task):
         super(TwoStagePnPPoke, self).__init__(env, task)
+
         self.last_owner = None
-        self.current_network = 0
-        self.network_rewards = [0] * self.num_networks
+        self.cur_pos    = None
+        self.last_pos   = None
+        self.init_cube  = None
+        self.sub_goal   = None
+        self.was_touched= False
     
     def reset(self):
         self.last_owner = None
-        self.current_network = 0
-        self.network_rewards = [0] * self.num_networks
+        self.cur_pos    = None
+        self.last_pos   = None
+        self.init_cube  = None
+        self.sub_goal   = None
+        self.was_touched= False
     
     def compute(self, observation=None):
-        # chuj = self.decide(observation)
-        # owner = 0
-        # goal_position, object_position, gripper_position = self.get_positions(observation)
-        print("chto?")
-        # target = [[gripper_position,object_position], [object_position, goal_position], [object_position, goal_position]][owner]
-        # reward = [self.compute_reach, self.compute_poke][owner](*target)
-        reward = 9
+        self.was_touched = (self.was_touched or observation["additional_obs"]["touch"])
+        self.set_pos(observation)
 
-        # self.last_owner = owner
+        owner = self.decide(observation)
+
+        reward = [self.compute_reach, self.compute_poke][owner]()
+
+        self.set_last_pos(observation)
+        self.last_owner = owner
         self.task.check_goal()
         self.rewards_history.append(reward)
         return reward
 
-    def decide(self, observation=None):
-        ret = 1
-        self.current_network = 999
-        #self.env.p.addUserDebugText(f"Network:{self.current_network}", [0.7,0.7,1.0], lifeTime=0.1, textColorRGB=[55,125,0])
-        return ret
+    def decide(self, observation=None) -> int:
+        owner = 0
+        grip = np.array(observation["additional_obs"]["endeff_xyz"])
+        goal = np.array(observation["goal_state"])
+        cube = np.array(observation["actual_state"])
+        sub_g = self.get_point_grg(goal, cube)
+        if sum((grip - sub_g)**2) < 0.05:
+            owner = 1
+        return owner
+
+    def set_pos(self, observation=None):
+        self.cur_pos = {
+            "grip": np.array(observation["additional_obs"]["endeff_xyz"]),
+            "goal": np.array(observation["goal_state"]),
+            "cube": np.array(observation["actual_state"]),
+        }
+        if self.last_pos == None:
+            self.last_pos = {
+                "grip": np.array(observation["additional_obs"]["endeff_xyz"]),
+                "goal": np.array(observation["goal_state"]),
+                "cube": np.array(observation["actual_state"])
+            }
+
+    def set_last_pos(self, observation=None):
+        self.last_pos = {
+            "grip": np.array(observation["additional_obs"]["endeff_xyz"]),
+            "goal": np.array(observation["goal_state"]),
+            "cube": np.array(observation["actual_state"])
+        }
+
+    def compute_reach(self) -> float:
+        reward = 0.
+        sub_goal = self.get_point_grg(self.cur_pos["goal"], self.cur_pos["cube"])
+        cur_dist  = self.get_distance(self.cur_pos["grip"], sub_goal)
+        last_dist = self.get_distance(self.last_pos["grip"], sub_goal)
+        reward =[self.lin_hyp_eval(cur_dist), -1.5*self.lin_hyp_eval(cur_dist)][int(cur_dist > last_dist)]
+        return reward
+
+    def compute_poke(self) -> float:
+        reward = 0.
+        if (not self.was_touched):
+            self.init_cube = self.cur_pos["cube"]
+
+        cur_dist1  = self.get_distance(self.cur_pos["grip"], self.init_cube)
+        last_dist1 = self.get_distance(self.last_pos["grip"], self.init_cube)
+
+        cur_dist2  = self.get_distance(self.cur_pos["cube"], self.cur_pos["goal"])
+        last_dist2 = self.get_distance(self.last_pos["cube"], self.last_pos["goal"])
+
+        dist1_reward = [self.lin_hyp_eval(cur_dist1), -1.5*self.lin_hyp_eval(cur_dist1)][int(cur_dist1 > last_dist1)]
+        angle_reward = self.get_angle_reward_2D(self.cur_pos["goal"], self.last_pos["cube"], self.cur_pos["cube"])
+        dist2_reward = [30*self.lin_hyp_eval(cur_dist2), -100*self.lin_hyp_eval(cur_dist2)][int(cur_dist2 > last_dist2)] 
+
+        reward = dist1_reward + angle_reward + dist2_reward*int(not not angle_reward)
+
+        return reward
     
+    def lin_penalty(self, dist: float, min_penalty: float = 0, k: float = 1) -> float:
+        return -dist*fabs(k) - fabs(min_penalty)
+
+    def get_point_grg(self, point1: 'numpy.ndarray', point2: 'numpy.ndarray', offset: float = 0.1) -> 'numpy.ndarray':
+        dir_unit_vctor = (point2-point1) / np.linalg.norm(point2-point1)
+        point3 = dir_unit_vctor*self.cube_offest + point2
+        return point3
+    
+    @staticmethod
+    def get_unit_vector(tail: 'numpy.ndarray', head: 'numpy.ndarray') -> 'numpy.ndarray':
+        vector = head - tail
+        return vector/np.linalg.norm(vector)
+
+    @staticmethod
+    def get_angle_2vec(vecU1: 'numpy.ndarray', vecU2: 'numpy.ndarray') -> float:
+        M = np.array([[vecU1[0], -vecU1[1]], [vecU1[1], vecU1[0]]])
+        cos, sin = np.linalg.solve(M, vecU2)
+        return -asin(sin)*180/pi
+
+    def is_moved_2D(self, last_pos: 'numpy.ndarray', cur_pos: 'numpy.ndarray') -> bool:
+        return (np.abs(last_pos[:-1] - cur_pos[:-1]) > 0.0001).any()
+
+    def get_angle_reward_2D(self, head1: 'numpy.ndarray', tail: 'numpy.ndarray', head2: 'numpy.ndarray',) -> float:
+        vecU1 = self.get_unit_vector(tail[:-1], head1[:-1])
+        vecU2 = self.get_unit_vector(tail[:-1], head2[:-1])
+        if not self.is_moved_2D(tail, head2):
+            return 0
+        angle = max(fabs(self.get_angle_2vec(vecU1, vecU2)), 0.1) 
+        return [-angle, 100/angle][int(angle > 20)]
+    
+    def lin_hyp_eval(self, dist: float, max_r: float = 1., default: float = 0.) -> float:
+        reward = [-dist+max_r, ((0.5*max_r)**2)/dist][int(dist > 0.5*max_r)]
+        return reward + default
+
 
 
 
