@@ -2403,17 +2403,20 @@ class TwoStagePnPBgrip(TwoStagePnP):
                 return True
         return False
 
-class TwoStagePnPPoke(TwoStagePnP):
+class TwoStagePoke(TwoStagePnP):
 
     def __init__(self, env, task):
-        super(TwoStagePnPPoke, self).__init__(env, task)
+        super(TwoStagePoke, self).__init__(env, task)
 
         self.last_owner = None
         self.cur_pos    = None
         self.last_pos   = None
         self.init_cube  = None
         self.sub_goal   = None
+        self.reached    = False
         self.was_touched= False
+        self.is_touching= False
+        self.wrong_dir  = False
     
     def reset(self):
         self.last_owner = None
@@ -2421,20 +2424,26 @@ class TwoStagePnPPoke(TwoStagePnP):
         self.last_pos   = None
         self.init_cube  = None
         self.sub_goal   = None
+        self.reached    = False
         self.was_touched= False
+        self.is_touching= False
+        self.wrong_dir  = False
     
     def compute(self, observation=None):
-        self.was_touched = (self.was_touched or observation["additional_obs"]["touch"])
+        self.is_touching = observation["additional_obs"]["touch"]
+        # print(observation["additional_obs"]["touch"])
+        self.was_touched = (self.was_touched or not not observation["additional_obs"]["touch"][0])
         self.set_pos(observation)
 
         owner = self.decide(observation)
-
+        
         reward = [self.compute_reach, self.compute_poke][owner]()
 
         self.set_last_pos(observation)
         self.last_owner = owner
         self.task.check_goal()
-        self.rewards_history.append(reward)
+        # self.rewards_history.append(reward)
+        self.controll_cube()
         return reward
 
     def decide(self, observation=None) -> int:
@@ -2443,7 +2452,11 @@ class TwoStagePnPPoke(TwoStagePnP):
         goal = np.array(observation["goal_state"])
         cube = np.array(observation["actual_state"])
         sub_g = self.get_point_grg(goal, cube)
-        if sum((grip - sub_g)**2) < 0.05:
+        if self.reached:
+            owner = 1
+        if sum((grip - sub_g)**2) < 0.02:
+            self.reached = True
+            self.init_cube = self.cur_pos["cube"]
             owner = 1
         return owner
 
@@ -2473,6 +2486,8 @@ class TwoStagePnPPoke(TwoStagePnP):
         cur_dist  = self.get_distance(self.cur_pos["grip"], sub_goal)
         last_dist = self.get_distance(self.last_pos["grip"], sub_goal)
         reward =[self.lin_hyp_eval(cur_dist), -1.5*self.lin_hyp_eval(cur_dist)][int(cur_dist > last_dist)]
+        self.env.p.addUserDebugText(f"reach reward: {reward}", [0.7,0.7,0.7], lifeTime=0.1, textColorRGB=[125,0,0])
+        self.env.p.addUserDebugLine(self.cur_pos["goal"], sub_goal, lineColorRGB=(255, 255, 255), lineWidth = 1, lifeTime = 0.1)
         return reward
 
     def compute_poke(self) -> float:
@@ -2487,20 +2502,32 @@ class TwoStagePnPPoke(TwoStagePnP):
         last_dist2 = self.get_distance(self.last_pos["cube"], self.last_pos["goal"])
 
         dist1_reward = [self.lin_hyp_eval(cur_dist1), -1.5*self.lin_hyp_eval(cur_dist1)][int(cur_dist1 > last_dist1)]
-        angle_reward = self.get_angle_reward_2D(self.cur_pos["goal"], self.last_pos["cube"], self.cur_pos["cube"])
+        angle_reward = self.get_angle_reward_2D(self.cur_pos["goal"], self.init_cube, self.cur_pos["cube"])
         dist2_reward = [30*self.lin_hyp_eval(cur_dist2), -100*self.lin_hyp_eval(cur_dist2)][int(cur_dist2 > last_dist2)] 
+        
+        self.env.p.addUserDebugText(f"poke reward: {angle_reward}", [0.7,0.7,0.7], lifeTime=0.1, textColorRGB=[125,0,0])
+        self.env.p.addUserDebugLine(self.cur_pos["goal"], self.init_cube, lineColorRGB=(255, 255, 255), lineWidth = 1, lifeTime = 0.1)
 
-        reward = dist1_reward + angle_reward + dist2_reward*int(not not angle_reward)
+        reward = dist1_reward + angle_reward + dist2_reward*int(not not angle_reward)*self.pocked()
 
         return reward
     
-    def lin_penalty(self, dist: float, min_penalty: float = 0, k: float = 1) -> float:
+    def lin_penalty(self, dist: float, min_penalty: float = 1, k: float = 1) -> float:
         return -dist*fabs(k) - fabs(min_penalty)
 
     def get_point_grg(self, point1: 'numpy.ndarray', point2: 'numpy.ndarray', offset: float = 0.1) -> 'numpy.ndarray':
         dir_unit_vctor = (point2-point1) / np.linalg.norm(point2-point1)
         point3 = dir_unit_vctor*self.cube_offest + point2
         return point3
+
+    def pocked(self) -> int:
+        """
+        returns 1 if cube was pocked by gripper
+        returns 0 otherwise
+        """
+        if self.was_touched and not self.is_touching:
+            return 1
+        else: return 0
     
     @staticmethod
     def get_unit_vector(tail: 'numpy.ndarray', head: 'numpy.ndarray') -> 'numpy.ndarray':
@@ -2521,13 +2548,34 @@ class TwoStagePnPPoke(TwoStagePnP):
         vecU2 = self.get_unit_vector(tail[:-1], head2[:-1])
         if not self.is_moved_2D(tail, head2):
             return 0
-        angle = max(fabs(self.get_angle_2vec(vecU1, vecU2)), 0.1) 
-        return [-angle, 100/angle][int(angle > 20)]
+        angle = max(fabs(self.get_angle_2vec(vecU1, vecU2)), 0.1)
+        # if angle > 
+        return [-angle, 100/angle][int(angle < 20)]
     
     def lin_hyp_eval(self, dist: float, max_r: float = 1., default: float = 0.) -> float:
         reward = [-dist+max_r, ((0.5*max_r)**2)/dist][int(dist > 0.5*max_r)]
         return reward + default
 
+    def break_training(self, msg: str = "training has been suspended!"):
+        self.env.episode_over = True
+        self.env.episode_failed = True
+        self.env.episode_info = msg
+
+    def controll_cube(self):
+        self.is_on_table()
+        self.wrong_touch()
+
+    def wrong_touch(self):
+        if self.last_owner == 0 and self.was_touched:
+            # print(self.was_touched)
+            self.break_training(msg = "cube was touched but not poked!")
+    
+    def is_on_table(self):
+        lower_left_corner   = np.array([-0.75, 0.05]) 
+        upper_right_corner  = np.array([0.75, 1.05])
+
+        if (self.cur_pos["cube"][:-1] < lower_left_corner).any() or (self.cur_pos["cube"][:-1] > upper_right_corner).any():
+            self.break_training(msg = "cube out of table")
 
 
 
