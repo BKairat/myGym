@@ -927,39 +927,6 @@ class TurnReward(SwitchReward):
         :param env: (object) Environment, where the training takes place
         :param task: (object) Task that is being trained, instance of a class TaskModule
     """
-    # def __init__(self, env, task):
-    #     super(TurnReward, self).__init__(env, task)
-    #     self.r = 0.45
-    #     self.k_w = 0    # coefficient for distance between actual position of robot's gripper and generated line
-    #     self.k_d = 1    # coefficient for absolute distance between gripper and end position
-    #     self.k_a = 0    # coefficient for calculated angle reward
-
-    # def compute(self, observation):
-    #     """
-    #     Compute reward signal based on distance between 2 points (robot gripper and middle point of predefined line)
-    #     and angle of handle
-    #     The position of the objects must be present in observation.
-    #     Params:
-    #         :param observation: (list) Observation of the environment
-    #     Returns:
-    #         :return reward: (float) Reward signal for the environment
-    #     """
-    #     goal = observation["goal_state"]
-    #     goal_position, object_position, gripper_position = self.get_positions(observation)
-    #     self.set_variables(goal, gripper_position)
-    #     self.set_offset(z=0.1)
-
-    #     d = self.threshold_reached()
-    #     a = self.calc_turn_reward()
-    #     reward = - self.k_d * d + a * self.k_a
-    #     if self.debug:
-    #         self.env.p.addUserDebugText(f"reward:{reward:.3f}, d:{d * self.k_d:.3f}, a: {a * self.k_a:.3f}",
-    #                                     [1, 1, 1], textSize=2.0, lifeTime=0.05, textColorRGB=[0.6, 0.0, 0.6])
-
-    #     #self.task.check_distance_threshold(observation=observation)
-    #     self.task.check_goal()
-    #     self.rewards_history.append(reward)
-    #     return reward
     def __init__(self, env, task):
         super(TurnReward, self).__init__(env, task)
         self.x_obj = None
@@ -1041,16 +1008,6 @@ class TurnReward(SwitchReward):
             rew_line    =   self.lin_hyp_eval(distances[3], max_r = rewards["max_line"], default = rewards["min_line"]) if distances[3] < last_dist[3] else -1.5*self.lin_hyp_eval(distances[3], max_r = rewards["max_line"], default = rewards["min_line"]) 
             rew_2point  =   self.lin_hyp_eval(distances[1], max_r = rewards["max_2point"], default = rewards["min_2point"]) if distances[1] < last_dist[1] else -1.5*self.lin_hyp_eval(distances[1], max_r = rewards["max_2point"], default = rewards["min_2point"])
 
-        # if not self.reach_line:
-        #     rew_1point = self.lin_eval(distances[0], max_r = 5) if distances[0] < last_dist[0] else -1/self.lin_eval(distances[0]) 
-        #     if distances[1] <= self.dist_offset:
-        #         rew_1point += 10
-        #         self.reach_line = True
-        # else:
-        #     rew_line    =   self.lin_eval(distances[3]) if distances[3] < last_dist[3] else -1/self.lin_eval(distances[3]) 
-        #     rew_2point  =   self.lin_eval(distances[1], max_r = 10) if distances[1] < last_dist[1] else -1/self.lin_eval(distances[1])
-        #     # if distances[3] < self.dist_offset:
-        #     #     rew_line += self.norm_eval_4_line(points[0], points[1], cur_pos)
         angle_rew = self.get_angle_reward()
         reward = rew_1point + rew_line + rew_2point + angle_rew + self.get_bonus(*distances)
 
@@ -2402,6 +2359,198 @@ class TwoStagePnPBgrip(TwoStagePnP):
                 self.env.p.changeVisualShape(self.env.env_objects["actual_state"].uid, -1, rgbaColor=[0, 255, 0, 1])
                 return True
         return False
+
+
+class DropReward2Stage(PokeReachReward):
+    
+    def __init__(self, env, task):
+        super(PokeReachReward, self).__init__(env, task)
+        self.dist_offset               = 0.05
+
+        self.last_points               = None 
+        self.was_dropped               = False
+        self.point_was_reached         = False
+        self.touching                  = None
+        self.was_thrown                = False
+        self.wrong_drop                = False
+        self.throw_penalty             = 0
+        self.drop_penalty              = 0
+        self.point_above_target        = None
+        self.up                        = 0.25
+        self.right_place               = False
+        self.drop_episode              = None
+    
+    def reset(self):
+        self.point_above_target        = None
+        self.last_points               = None
+        self.touching                  = None
+        self.was_dropped               = False
+        self.point_was_reached         = False
+        self.was_thrown                = False
+        self.wrong_drop                = False
+        self.right_place               = False
+        self.drop_episode              = None
+
+    def compute(self, observation=None):
+        # self.is_failed()
+        owner = self.decide(observation)
+
+        goal_pos, obj_pos, robot = self.set_points(observation)
+        obj_last_pos, robot_last = self.last_points if self.last_points != None else [obj_pos, robot]
+        if self.env.episode_steps == 1 and "gripper" not in self.env.robot_action:
+            self.env.task.current_task = 0
+            self.env.robot.magnetize_object(self.env.task_objects["actual_state"])
+        
+        self.touching = observation["additional_obs"]["touch"][0]
+
+        owner = self.decide(observation)
+        self.point_above_target  = goal_pos + np.array([0., 0., self.up])
+
+        if owner == 0:
+            reward = self.reward_move_object([obj_pos, obj_last_pos], self.point_above_target)
+        elif "gripper" in self.env.robot_action:
+            reward = self.drop_reward([robot, robot_last],
+                                      [obj_pos, obj_last_pos],
+                                      goal_pos)
+        else:
+            reward = self.reward_move_object([robot, robot_last], self.point_above_target)
+
+        self.check_task([robot, robot_last],[obj_pos, obj_last_pos], goal_pos)
+        self.task.check_goal()
+        reward = self.penalty_failed(reward)
+        self.rewards_history.append(reward)
+        self.set_last_positions(obj_pos, robot)
+        if self.was_dropped and self.drop_episode == None:
+            self.drop_episode = self.env.episode_steps
+        # print(reward)
+        return reward
+    
+
+    def reward_move_object(self, obj_pos: list, goal: 'numpy.ndarray') -> float:
+        """
+        Params:
+            :param obj_pos: list of two arrays, current possition and last possition of object.
+            :param goal: (array), the point where we want to place an object.
+        Returns:
+            :return reward: (float), reward of moving an object to given point.
+        """
+        reward = 0.
+        cur_dist = self.get_distance(obj_pos[0], goal)
+        last_dist= self.get_distance(obj_pos[1], goal)
+        if last_dist < cur_dist and False:
+            reward = self.lin_penalty(cur_dist, min_penalty = -6)
+        else:
+            # reward = self.exp_eval(cur_dist, max_r = 5)
+            reward = self.lin_eval(cur_dist)
+        return reward
+
+    def is_free_falling(self, cur_pos: 'numpy.ndarray', last_pos: 'numpy.ndarray', threshold: float = 45.) -> bool:
+        """
+        Params:
+            :param cur_pos: (array) current possition of object,
+            :param last_pos: (array) last possition of object.
+        Returns:
+            :return reward: (bool) True if object is free falling else False.
+        """
+        angle = self.get_angle_2vec(np.array([0, 0, -1]), cur_pos - last_pos)
+        if fabs(angle) < threshold and cur_pos[-1] < last_pos[-1] and not self.touching:
+            return True
+        else:
+            return False
+
+    def check_task(self, robot: list, obj_pos: list, target_pos: 'numpy.ndarray'):
+        """
+        Params:
+            :param obj_pos: list of two arrays, current possition and last possition of object.
+            :param target_pos: list 
+        Controlls if task was compleated correctly.
+        Contrlolls:
+        - if object was dropped to target,
+        - if wasn't thrown.
+        """
+        # assert "gripper" in self.env.robot_action, "This task or reward require to use gripper action (ex absolute_gripper)!"
+    
+        # if sqrt(sum((target_pos[:-1]-obj_pos[0][:-1])**2)) < 0.2 and obj_pos[0][-1] < 0.07:
+        # print(obj_pos)
+        # if obj_pos[0][-1] < 0.07  and self.env.episode_steps > 30:
+        #     print("yahoooooo")
+        # print(self.drop_episode)
+        if self.drop_episode != None and self.env.episode_steps > self.drop_episode + 20:
+            self.right_place = True
+
+        if not self.touching and self.get_distance(obj_pos[0], robot[0]) > 0.05:
+            if self.is_free_falling(obj_pos[0], obj_pos[1]):
+                if sqrt(sum((target_pos[:-1] - obj_pos[0][:-1])**2)) >= 0.5:
+                    self.wrong_drop = True
+            else:
+                self.was_thrown = True
+
+    def is_failed(self):
+        if self.was_thrown:
+            self.env.episode_info   = "Object was thrown!"
+            self.env.episode_over   = True
+            self.env.episode_failed = True
+        if self.wrong_drop:
+            self.env.episode_info   = "Object was dropped in wrong place!"
+            self.env.episode_over   = True
+            self.env.episode_failed = True
+
+    def penalty_failed(self, reward:float) -> float:
+        if self.was_thrown:
+            reward = -self.throw_penalty * ((512 - self.env.episode_steps)/512)
+        if self.wrong_drop:
+            reward = -self.drop_penalty * ((512 - self.env.episode_steps)/512)
+        return reward
+
+    def drop_reward(self, robot_pos: list, obj_pos: list, goal_pos: 'numpy.ndarray') -> float:
+        """
+        Params:
+            :param robot_pos: list of two arrays, current possition and last possition of robot.
+            :param obj_pos: list of two arrays, current possition and last possition of object.
+            :param goal_pos: array of goal possition 
+        Returns:
+            :return reward: (float) reward for dropping
+        """
+        
+        reward = 0.
+        reward += 0.1 * self.reward_move_object(robot_pos, goal_pos)
+        if self.touching:
+            reward += 0.5 * self.reward_move_object(obj_pos, goal_pos)
+            reward -= 10
+        else:
+            reward += 100 
+        return reward
+    
+    def decide(self, observation=None) -> int:
+        """
+        Params:
+            :param observation: (list) Observation of the environment.
+        Returns:
+            :return reward: (int) owner.
+        """
+        owner = 0
+        goal_pos, cube_pos, robot = self.set_points(observation)
+        # print(goal_pos)
+        point_above_target  = goal_pos + np.array([0., 0., self.up])
+        if self.get_distance(point_above_target, cube_pos) <= 0.1 or self.point_was_reached or self.env.episode_steps == 30:
+            owner = 1
+            self.point_was_reached = True
+            # print("uauauuauauauua")
+            # self.env.robot.release_all_objects()
+        return owner
+
+    def get_angle_2vec(self, vec1: "numpy.ndarray", vec2: "numpy.ndarray") -> float:
+        """
+        Params:
+            :param vec1: array, first vector
+            :param vec2: array, second vector
+        Returns:
+            :return angle: angle (degree: from -180 to 180) between two givven vectors
+        """
+        scal_prod = sum(vec1*vec2)
+        leng_prod = sqrt(sum(vec1**2)) * sqrt(sum(vec2**2))
+        return acos(scal_prod/leng_prod)*180/pi
+
 
 class TwoStagePoke(TwoStagePnP):
 

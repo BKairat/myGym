@@ -165,6 +165,22 @@ class TaskModule():
             return True
         return False
 
+        def drop_magnetic(self):
+        
+        if self.env.reward.point_was_reached:
+            # print("yyyyyyyy")
+            if not self.env.reward.was_dropped:
+                self.env.episode_over = False
+                self.env.robot.release_all_objects()
+                self.env.task.subtask_over = True
+                self.current_task += 1
+                self.env.reward.was_dropped = True
+        if self.env.reward.right_place:
+            return True
+        else: 
+                return False
+
+
     def check_object_moved(self, object, threshold=0.3):
         """
         Check if object moved more than allowed threshold
@@ -234,8 +250,11 @@ class TaskModule():
         """
         
         finished = None
-        if self.task_type in ['reach', 'poke', 'pnp', 'pnpbgrip']:
-            finished = self.check_distance_threshold(self._observation)  
+        if self.task_type in ['reach', 'poke', 'pnp', 'pnpbgrip', 'drop']:
+            finished = self.check_distance_threshold(self._observation)
+        if self.task_type == "dropmag":
+            self.check_distance_threshold(self._observation)
+            finished = self.drop_magnetic()  
         if self.task_type in ['pnprot','pnpswipe']:
             finished = self.check_distrot_threshold(self._observation)  
         if self.task_type in ['push', 'throw']:

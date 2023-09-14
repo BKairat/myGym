@@ -36,7 +36,7 @@
 "yolact_config" :null,
 #Train
 "train_framework"   :"tensorflow",
-"algo"              :"acktr",
+"algo"              :"ppo",
 "num_networks" : 1,
 "max_episode_steps" :512,
 "algo_steps"        :512,
