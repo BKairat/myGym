@@ -165,20 +165,19 @@ class TaskModule():
             return True
         return False
 
-        def drop_magnetic(self):
-        
+    def drop_magnetic(self):
         if self.env.reward.point_was_reached:
-            # print("yyyyyyyy")
+            print("yyyyyyyy")
             if not self.env.reward.was_dropped:
                 self.env.episode_over = False
                 self.env.robot.release_all_objects()
-                self.env.task.subtask_over = True
-                self.current_task += 1
+                # self.env.task.subtask_over = True
+                self.current_task = 0
                 self.env.reward.was_dropped = True
         if self.env.reward.right_place:
             return True
         else: 
-                return False
+            return False
 
 
     def check_object_moved(self, object, threshold=0.3):

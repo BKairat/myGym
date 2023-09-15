@@ -575,7 +575,15 @@ class Robot:
         else:
             if self.gjoints_num:
                 self._move_gripper(self.gjoints_limits[1])
-            if "pnp" in self.task_type or "drop" in self.task_type: 
+
+            if "drop" in self.task_type:
+                self.gripper_active = True
+                self.magnetize_object(env_objects["actual_state"])
+                if len(self.magnetized_objects):
+                    for key,val in self.magnetized_objects.items():
+                        self.p.changeConstraint(val, self.get_position(),self.get_orientation())
+
+            if "pnp" in self.task_type:
             #"Need to provide env_objects to use gripper"
             #When gripper is not in robot action it will magnetize objects
                 self.gripper_active = True
