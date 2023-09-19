@@ -166,15 +166,21 @@ class TaskModule():
         return False
 
     def drop_magnetic(self):
+        """
+        Release the object if required point was reached and controls if task was compleated.
+        Returns:
+            :return: (bool)  
+        """
         if self.env.reward.point_was_reached:
-            print("yyyyyyyy")
             if not self.env.reward.was_dropped:
                 self.env.episode_over = False
                 self.env.robot.release_all_objects()
-                # self.env.task.subtask_over = True
+                self.env.task.subtask_over = True
                 self.current_task = 0
                 self.env.reward.was_dropped = True
-        if self.env.reward.right_place:
+        # print("drop episode", self.env.reward.drop_episode, "episode steps", self.env.episode_steps)
+        if self.env.reward.drop_episode and self.env.reward.drop_episode + 35 < self.env.episode_steps:
+            self.end_episode_success()
             return True
         else: 
             return False
@@ -253,7 +259,7 @@ class TaskModule():
             finished = self.check_distance_threshold(self._observation)
         if self.task_type == "dropmag":
             self.check_distance_threshold(self._observation)
-            finished = self.drop_magnetic()  
+            finished = self.drop_magnetic()
         if self.task_type in ['pnprot','pnpswipe']:
             finished = self.check_distrot_threshold(self._observation)  
         if self.task_type in ['push', 'throw']:

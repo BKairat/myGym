@@ -2536,60 +2536,67 @@ class DropReward2Stage(PokeReachReward):
         self.up                        = 0.25
         self.right_place               = False
         self.drop_episode              = None
+        self.get_bonus                 = False
     
     def reset(self):
-        self.point_above_target        = None
+        self.env.task.current_task     = 0
         self.last_points               = None
         self.touching                  = None
-        self.was_dropped               = False
-        self.point_was_reached         = False
         self.was_thrown                = False
         self.wrong_drop                = False
         self.right_place               = False
-        self.drop_episode              = None
+        if self.env.episode_steps <= 1:
+            self.drop_episode              = None
+            self.point_above_target        = None
+            self.was_dropped               = False
+            self.point_was_reached         = False
+            self.get_bonus                 = False
 
     def compute(self, observation=None):
         owner = self.decide(observation)
-        print(self.env.task.current_task, self.env.episode_steps)
+        # print("drop episode", self.drop_episode, "owner", owner)
+
+        # print(self.env.task.current_task, self.env.episode_steps)
         goal_pos, obj_pos, robot = self.set_points(observation)
         obj_last_pos, robot_last = self.last_points if self.last_points != None else [obj_pos, robot]
         if self.env.episode_steps == 1 and "gripper" not in self.env.robot_action:
-            # self.env.task.current_task = 0
+            self.point_above_target  = goal_pos + np.array([0., 0., self.up]) 
             self.env.robot.magnetize_object(self.env.task_objects["actual_state"])
         
-        self.env.p.addUserDebugLine(robot, obj_pos, lineColorRGB=(255, 255, 255), lineWidth = 1, lifeTime = 0.1)
+        self.env.p.addUserDebugLine(robot, [1,1,1], lineColorRGB=(255, 255, 255), lineWidth = 1, lifeTime = 0.1)
 
         self.touching = observation["additional_obs"]["touch"][0]
 
-        owner = self.decide(observation)
-        self.point_above_target  = goal_pos + np.array([0., 0., self.up])
+        owner = self.decide(observation)     
 
         if owner == 0:
+            # print(1)
             reward = self.reward_move_object([obj_pos, obj_last_pos], self.point_above_target)
         elif "gripper" in self.env.robot_action:
+            # print(2)
             reward = self.drop_reward([robot, robot_last],
                                       [obj_pos, obj_last_pos],
                                       goal_pos)
         else:
-            reward = self.reward_move_object([robot, robot_last], self.point_above_target)
-
-        if self.env.episode_steps >= 100:
-            # self.point_was_reached = True
-            self.env.episode_over = False
-            self.env.robot.release_all_objects()
-            # self.env.episode_info = "object was dropped!"
-            self.env.task.subtask_over = True
-            # print("hellooooooooo")
+            reward = self.reward_move_object([robot, robot_last], self.point_above_target) + 1
+            self.env.p.addUserDebugLine(robot, self.point_above_target, lineColorRGB=(255, 255, 255), lineWidth = 1, lifeTime = 0.1)
+            # print(3)
 
         self.check_task([robot, robot_last],[obj_pos, obj_last_pos], goal_pos)
+        
         self.task.check_goal()
-        reward = self.penalty_failed(reward)
+        reward -= self.penalty_failed()
+        if self.get_bonus:
+            reward += 1000
+            self.get_bonus = False
         self.rewards_history.append(reward)
+        # print(reward, end = " ")
         self.set_last_positions(obj_pos, robot)
-        if self.was_dropped and self.drop_episode == None:
+        if self.was_dropped and self.drop_episode == None and self.env.env_objects["actual_state"] not in self.env.robot.magnetized_objects.keys():
             self.drop_episode = self.env.episode_steps
         # print(reward)
         self.env.p.addUserDebugText(f"reward: {reward}", [0.5, 0.5, 0.5], textSize=2.0, lifeTime=0.05, textColorRGB=[0.6, 0.0, 0.6])
+        # print("reward",r/eward)
         return reward
     
 
@@ -2608,7 +2615,8 @@ class DropReward2Stage(PokeReachReward):
             reward = self.lin_penalty(cur_dist, min_penalty = -6)
         else:
             # reward = self.exp_eval(cur_dist, max_r = 5)
-            reward = self.lin_eval(cur_dist)
+            # reward = self.lin_eval(cur_dist)
+            reward = (last_dist - cur_dist) / last_dist
         return reward
 
     def is_free_falling(self, cur_pos: 'numpy.ndarray', last_pos: 'numpy.ndarray', threshold: float = 45.) -> bool:
@@ -2662,12 +2670,13 @@ class DropReward2Stage(PokeReachReward):
             self.env.episode_over   = True
             self.env.episode_failed = True
 
-    def penalty_failed(self, reward:float) -> float:
+    def penalty_failed(self) -> float:
+        penalty = 0.
         if self.was_thrown:
-            reward = -self.throw_penalty * ((512 - self.env.episode_steps)/512)
+            penalty = -self.throw_penalty * ((512 - self.env.episode_steps)/512)
         if self.wrong_drop:
-            reward = -self.drop_penalty * ((512 - self.env.episode_steps)/512)
-        return reward
+            penalty = -self.drop_penalty * ((512 - self.env.episode_steps)/512)
+        return penalty
 
     def drop_reward(self, robot_pos: list, obj_pos: list, goal_pos: 'numpy.ndarray') -> float:
         """
@@ -2697,13 +2706,12 @@ class DropReward2Stage(PokeReachReward):
         """
         owner = 0
         goal_pos, cube_pos, robot = self.set_points(observation)
-        # print(goal_pos)
         point_above_target  = goal_pos + np.array([0., 0., self.up])
         if self.get_distance(point_above_target, cube_pos) <= 0.1 or self.point_was_reached:
             owner = 1
+            if not self.point_was_reached:
+                self.get_bonus = True
             self.point_was_reached = True
-            print("uauauuauauauua")
-            # self.env.robot.release_all_objects()
         return owner
 
     def get_angle_2vec(self, vec1: "numpy.ndarray", vec2: "numpy.ndarray") -> float:
